@@ -27,12 +27,12 @@ defs: list[Tree], 类体，类体中只能有
 
 
 class ClassDecl(Tree):
-    def __init__(self, access: int, class_name: str, defs: list[Tree]):
+    def __init__(self, access: int, class_name: str, defs: list[Tree], extends: Tree):
         super().__init__()
         self.name = class_name
         self.defs = defs
         self.access = access
-        self.extends = None
+        self.extends = extends
         return
 
 

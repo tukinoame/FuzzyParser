@@ -1,3 +1,5 @@
+from re import S
+import re
 from Tree import *
 from lexer import Lexer
 from tokens import *
@@ -112,7 +114,7 @@ class Parser:
                     result = True
 
         self.lexer.set_pos(saved_pos)
-        self.next_token()
+        # self.next_token()
         return result
 
     def parse_expression(self):
@@ -149,7 +151,9 @@ class Parser:
             elif self.token.name in ["INT", "BOOLEAN"]:
                 return self.parse_var_decl()
             else:
-                return self.parse_expression()
+                exp = self.parse_expression()
+                self.accept("SEMI")
+                return exp
         except Exception as e:
             print(f"Error parsing statement: {e}")
 
@@ -332,3 +336,21 @@ class Parser:
 
         self.accept("SEMI")
         return package_name
+
+
+if __name__ == "__main__":
+    stream = """
+    package pk;
+    public class test{
+        void func(int type) {
+            int a = 1;
+            if (true) {
+                a = 2;
+            } else {
+                a = 3;
+            }
+        }
+    }
+    """
+    p = Parser(stream)
+    p.parse_compilation_unit()

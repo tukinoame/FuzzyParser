@@ -68,6 +68,9 @@ class Lexer:
         expect.append("end_of_stream")
         while self.current not in expect:
             self.next_char()
+    
+    def __len__(self):
+        return self.n
 
 if __name__ == '__main__':
     stream = '''
