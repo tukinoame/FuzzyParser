@@ -1,5 +1,4 @@
-from re import S
-import re
+from pytest import Package
 from Tree import *
 from lexer import Lexer
 from tokens import *
@@ -47,21 +46,24 @@ class Parser:
         CompilationUnit: [PackageDecl] ClassDecl*
         """
         try:
-            pack_name = self.parse_package_declaration()
-        except Exception as e:
+            pack = self.parse_package_declaration()
+        except SyntaxError as e:
             print(f"Error parsing package declaration: {e}")
-            # TODO
-        unit = CompilationUnit(pack_name, [])
+            erre_node = PackageDecl("")
+            erre_node.is_normal_node = False
+            err_tokens = recovery(self.lexer, RecoveryPolicy.find_toplevel_border)
+            erre_node.info = err_tokens
+            pack = erre_node
+
+        unit = CompilationUnit(pack, [])
         while self.token.name != "EOS":
             try:
                 class_decl = self.parse_class_decl()
                 unit.add_def(class_decl)
-            except Exception as e:
+            except SyntaxError as e:
                 print(f"Error parsing class declaration: {e}")
                 err_node = ClassDecl(0, "", [])
                 err_node.is_normal_node = False
-
-                # 进行错误恢复找右界
                 err_tokens = recovery(self.lexer, RecoveryPolicy.find_toplevel_border)
                 err_node.info = err_tokens
                 unit.add_def(err_node)
@@ -73,24 +75,65 @@ class Parser:
         """
         access = self.parse_modifier()
 
-        self.accept("CLASS")
+        claz = self.accept("CLASS")
+        if not claz:
+            raise SyntaxError(
+                "Expected 'class' keyword", shared_str_to_terminal["class"]
+            )
         class_name = self.parse_ident()
+        if not class_name:
+            raise SyntaxError("Expected class name", test_terminal_id)
 
         extends = None
         if self.token.name == "EXTENDS":
             self.accept("EXTENDS")
             extends = self.parse_ident()
+            if not extends:
+                raise SyntaxError(
+                    "Expected class name after 'extends'", test_terminal_id
+                )
 
-        self.accept("LBRACE")
+        lbrace = self.accept("LBRACE")
+        if not lbrace:
+            raise SyntaxError(
+                "Expected '{' after class declaration", shared_str_to_terminal["{"]
+            )
+
         members = []
         while self.token.name != "RBRACE" and self.token.name != "EOS":
             member = None
             if self.is_method_declaration():
-                member = self.parse_method_decl()
+                try:
+                    member = self.parse_method_decl()
+                except SyntaxError as e:
+                    print(f"Error parsing method declaration: {e}")
+                    err_node = MethodDecl(0, PrimitiveType("void"), "", [], Block([]))
+                    err_node.is_normal_node = False
+                    err_tokens = recovery(
+                        self.lexer, RecoveryPolicy.find_class_member_border
+                    )
+                    err_node.info = err_tokens
+                    member = err_node
             else:
-                member = self.parse_var_decl()
+                try:
+                    member = self.parse_var_decl()
+                except SyntaxError as e:
+                    print(f"Error parsing variable declaration: {e}")
+                    err_node = VarDecl(0, PrimitiveType("int"), None)
+                    err_node.is_normal_node = False
+                    err_tokens = recovery(
+                        self.lexer, RecoveryPolicy.find_class_member_border
+                    )
+                    err_node.info = err_tokens
+                    member = err_node
             members.append(member)
-        self.accept("RBRACE")
+
+        rbrace = self.accept("RBRACE")
+        if not rbrace:
+            raise SyntaxError(
+                "Expected '}' at the end of class declaration",
+                shared_str_to_terminal["}"],
+            )
 
         return ClassDecl(access, class_name, members, extends)
 
@@ -114,7 +157,6 @@ class Parser:
                     result = True
 
         self.lexer.set_pos(saved_pos)
-        # self.next_token()
         return result
 
     def parse_expression(self):
@@ -143,35 +185,115 @@ class Parser:
         """
         Statement: Block | IfStatement | VarDecl | Expression
         """
-        try:
-            if self.token.name == "LBRACE":
-                return self.parse_block()
-            elif self.token.name == "IF":
-                return self.parse_if_statement()
-            elif self.token.name in ["INT", "BOOLEAN"]:
-                return self.parse_var_decl()
-            else:
+        if self.token.name == "LBRACE":
+            try:
+                blk = self.parse_block()
+                return blk
+            except SyntaxError as e:
+                print(f"Error parsing block: {e}")
+                error_node = Block([])
+                error_node.is_normal_node = False
+
+                error_tokens = recovery(
+                    self.lexer, RecoveryPolicy.find_statement_border
+                )
+                error_node.info = error_tokens
+                return error_node
+        elif self.token.name == "IF":
+            try:
+                ifstmt = self.parse_if_statement()
+                return ifstmt
+            except SyntaxError as e:
+                print(f"Error parsing if statement: {e}")
+                error_node = IfStatement(None, None, None)
+                error_node.is_normal_node = False
+
+                error_tokens = recovery(
+                    self.lexer, RecoveryPolicy.find_statement_border
+                )
+                error_node.info = error_tokens
+                return error_node
+        elif self.token.name in ["INT", "BOOLEAN"]:
+            try:
+                var = self.parse_var_decl()
+                return var
+            except SyntaxError as e:
+                print(f"Error parsing variable declaration: {e}")
+                error_node = VarDecl(0, PrimitiveType("int"), None)
+                error_node.is_normal_node = False
+
+                error_tokens = recovery(
+                    self.lexer, RecoveryPolicy.find_statement_border
+                )
+                error_node.info = error_tokens
+                return error_node
+        else:
+            try:
                 exp = self.parse_expression()
-                self.accept("SEMI")
-                return exp
-        except Exception as e:
-            print(f"Error parsing statement: {e}")
+            except Exception as e:
+                print(f"Error parsing expression: {e}")
+                error_node = Expression()
+                error_node.is_normal_node = False
+
+                error_tokens = recovery(
+                    self.lexer, RecoveryPolicy.find_statement_border
+                )
+                error_node.info = error_tokens
+                return error_node
+            semi = self.accept("SEMI")
+            if not semi:
+                raise SyntaxError(
+                    "Expected ';' at the end of statement", shared_str_to_terminal[";"]
+                )
+            return exp
 
     def parse_if_statement(self):
         """
         IfStatement: if ( Expression ) Statement [else Statement]
         """
-        self.accept("IF")
-        self.accept("LPAREN")
-        condition = self.parse_expression()
-        self.accept("RPAREN")
+        ifs = self.accept("IF")
+        if not ifs:
+            raise SyntaxError("Expected 'if' keyword", shared_str_to_terminal["if"])
+        lparen = self.accept("LPAREN")
+        if not lparen:
+            raise SyntaxError("Expected '(' after 'if'", shared_str_to_terminal["("])
+        cond = condition = self.parse_expression()
+        if not condition:
+            raise SyntaxError(
+                "Expected condition expression", test_terminal_bool_literal
+            )
+        rparen = self.accept("RPAREN")
+        if not rparen:
+            raise SyntaxError(
+                "Expected ')' after condition", shared_str_to_terminal[")"]
+            )
 
-        then_part = self.parse_statement()
+        try:
+            then_part = self.parse_statement()
+        except SyntaxError as e:
+            print(f"Error parsing then part of if statement: {e}")
+            error_node = Statement()
+            error_node.is_normal_node = False
+
+            error_tokens = recovery(self.lexer, RecoveryPolicy.find_statement_border)
+            error_node.info = error_tokens
+            then_part = error_node
 
         else_part = None
         if self.token.name == "ELSE":
             self.next_token()
-            else_part = self.parse_statement()
+            try:
+                else_part = self.parse_statement()
+            except SyntaxError as e:
+                print(f"Error parsing else part of if statement: {e}")
+                error_node = Statement()
+                error_node.is_normal_node = False
+
+                error_tokens = recovery(
+                    self.lexer, RecoveryPolicy.find_statement_border
+                )
+                error_node.info = error_tokens
+                else_part = error_node
 
         return IfStatement(condition, then_part, else_part)
 
@@ -181,7 +303,7 @@ class Parser:
             self.next_token()
             return ident
         else:
-            raise Exception("Expected ID")
+            return None
 
     def parse_var_decl(self):
         """
@@ -195,30 +317,47 @@ class Parser:
                 var_type = PrimitiveType(self.token.content)
                 self.next_token()
             else:
-                raise Exception(f"Expected type, got {self.token.name}")
+                raise SyntaxError(
+                    "Expected variable type", shared_str_to_terminal["int"]
+                )
 
             var_name = self.parse_ident()
             if not var_name:
-                raise Exception("Expected variable name")
+                raise SyntaxError("Expected variable name", test_terminal_id)
 
             initialization = None
             if self.token.name == "EQ":
-                self.accept("EQ")
-                initialization = self.parse_expression()
+                eq = self.accept("EQ")
+                if not eq:
+                    raise SyntaxError("Expected '=' in variable declaration", eq)
 
-            self.accept("SEMI")
+                initialization = self.parse_expression()
+                if not initialization:
+                    raise SyntaxError(
+                        "Expected initialization expression", test_terminal_int_literal
+                    )
+
+            semi = self.accept("SEMI")
+            if not semi:
+                raise SyntaxError(
+                    "Expected ';' at the end of variable declaration",
+                    shared_str_to_terminal[";"],
+                )
             return VarDecl(access, var_type, initialization)
 
         except Exception as e:
             print(f"Error in variable declaration: {str(e)}")
-            # TODO
 
     def parse_param_list(self):
         """
         ParamList: (Type ID (COMMA Type ID)*)
         """
         params = []
-        self.accept("LPAREN")
+        lparen = self.accept("LPAREN")
+        if not lparen:
+            raise SyntaxError(
+                "Expected '(' in parameter list", shared_str_to_terminal["("]
+            )
 
         if self.token.name == "RPAREN":
             self.accept("RPAREN")
@@ -241,9 +380,17 @@ class Parser:
 
             if self.token.name != "COMMA":
                 break
-            self.accept("COMMA")
+            comma = self.accept("COMMA")
+            if not comma:
+                raise SyntaxError(
+                    "Expected ',' in parameter list", shared_str_to_terminal[","]
+                )
 
-        self.accept("RPAREN")
+        rparen = self.accept("RPAREN")
+        if not rparen:
+            raise SyntaxError(
+                "Expected ')' in parameter list", shared_str_to_terminal[")"]
+            )
         return params
 
     def parse_method_decl(self):
@@ -260,20 +407,40 @@ class Parser:
             return_type = PrimitiveType(self.token.content)
             self.next_token()
         else:
-            raise Exception(f"Expected return type, got {self.token.name}")
+            raise SyntaxError("Expected return type", shared_str_to_terminal["int"])
 
         if self.token.name != "ID":
-            raise Exception(f"Expected method name, got {self.token.name}")
+            raise SyntaxError("Expected method name", test_terminal_id)
         method_name = self.token.content
         self.next_token()
 
-        params = self.parse_param_list()
+        try:
+            params = self.parse_param_list()
+        except SyntaxError as e:
+            print(f"Error parsing parameter list: {e}")
+            params = []
 
         body = None
         if self.token.name == "LBRACE":
-            body = self.parse_block()
+            try:
+                body = self.parse_block()
+            except SyntaxError as e:
+                print(f"Error parsing method body: {e}")
+                error_node = Block([])
+                error_node.is_normal_node = False
+
+                error_tokens = recovery(
+                    self.lexer, RecoveryPolicy.find_statement_border
+                )
+                error_node.info = error_tokens
+                body = error_node
         else:
-            self.accept("SEMI")
+            semi = self.accept("SEMI")
+            if not semi:
+                raise SyntaxError(
+                    "Expected ';' at the end of method declaration",
+                    shared_str_to_terminal[";"],
+                )
             body = Block([])
 
         return MethodDecl(access, return_type, method_name, params, body)
@@ -284,7 +451,11 @@ class Parser:
         """
         statements = []
 
-        self.accept("LBRACE")
+        lbrace = self.accept("LBRACE")
+        if not lbrace:
+            raise SyntaxError(
+                "Expected '{' at the beginning of block", shared_str_to_terminal["{"]
+            )
 
         while self.token.name != "RBRACE" and self.token.name != "EOS":
             try:
@@ -325,17 +496,22 @@ class Parser:
         """
         if self.token.name != "PACKAGE":
             return ""
-        self.accept("PACKAGE")
+        pack = self.accept("PACKAGE")
+        if not pack:
+            raise SyntaxError(
+                "Expected 'package' keyword", shared_str_to_terminal["package"]
+            )
 
-        package_name = ""
-        if self.token.name == "ID":
-            package_name = self.token.content
-            self.next_token()
-        else:
-            raise Exception("Expected ID after package keyword")
+        package_name = self.accept("ID")
+        if not package_name:
+            raise SyntaxError("Expected package name", test_terminal_id)
 
-        self.accept("SEMI")
-        return package_name
+        semi = self.accept("SEMI")
+        if not semi:
+            raise SyntaxError(
+                "Expected ';' after package declaration", shared_str_to_terminal[";"]
+            )
+        return PackageDecl(package_name.content)
 
 
 if __name__ == "__main__":

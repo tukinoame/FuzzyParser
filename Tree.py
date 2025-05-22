@@ -18,6 +18,21 @@ class Tree:
 
 """
 ====================
+        包声明
+====================
+package_name: str, 包名
+"""
+
+
+class PackageDecl(Tree):
+    def __init__(self, package_name: str):
+        super().__init__()
+        self.package_name = package_name
+        return
+
+
+"""
+====================
        类定义
 ====================
 access: int, 访问权限，0表示未设定，1表示private，2表示protected，3表示public
@@ -46,7 +61,7 @@ defs: list[ClassDecl], 该文件下的所有类定义
 
 
 class CompilationUnit(Tree):
-    def __init__(self, pack_name: str, defs: list[ClassDecl]):
+    def __init__(self, pack_name: PackageDecl, defs: list[ClassDecl]):
         super().__init__()
         self.package_decl = pack_name
         self.defs = defs
